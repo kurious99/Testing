@@ -1,6 +1,11 @@
-name: Telegram PR notify
+name: telegram-notify
 
 on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: PR number to notify
+        required: false
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review, closed, labeled]
   pull_request_review:
@@ -18,14 +23,26 @@ jobs:
         id: build
         uses: actions/github-script@v7
         with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const pr = context.payload.pull_request;
+            let pr = context.payload.pull_request;
+            let action = context.payload.action || 'manual';
+
+            if (!pr && context.payload.inputs?.pr_number) {
+              const number = Number(context.payload.inputs.pr_number);
+              const res = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: number,
+              });
+              pr = res.data;
+            }
+
             if (!pr) {
               core.setOutput('skip', 'true');
               return;
             }
 
-            const action = context.payload.action;
             const labels = (pr.labels || []).map(l => l.name);
             const hasAutomerge = labels.includes('automerge');
             let emoji = '🔔';
@@ -36,7 +53,6 @@ jobs:
               const reviewState = context.payload.review.state;
               emoji = reviewState === 'approved' ? '✅' : reviewState === 'changes_requested' ? '⚠️' : '💬';
               headline = `PR #${pr.number} review: ${reviewState}`;
-              details.push(`Title: ${pr.title}`);
             } else if (action === 'opened') {
               emoji = '🆕';
               headline = `PR #${pr.number} opened`;
@@ -58,19 +74,16 @@ jobs:
             } else if (action === 'closed') {
               emoji = '❌';
               headline = `PR #${pr.number} closed`;
+            } else if (action === 'manual') {
+              emoji = hasAutomerge ? '🤖' : '🔔';
+              headline = `PR #${pr.number} status`;
             }
 
             details.push(`Title: ${pr.title}`);
             details.push(`State: ${pr.state}${pr.merged ? ' (merged)' : ''}`);
             if (hasAutomerge) details.push(`Labels: ${labels.join(', ')}`);
             details.push(`Link: ${pr.html_url}`);
-
-            const message = [
-              `${emoji} ${headline}`,
-              ...details,
-            ].join('\n');
-
-            core.setOutput('message', message);
+            core.setOutput('message', [`${emoji} ${headline}`, ...details].join('\n'));
 
       - name: Send Telegram message
         if: steps.build.outputs.skip != 'true'
@@ -82,10 +95,7 @@ jobs:
           python3 - <<'PY'
 import json, os, urllib.request
 url = f"https://api.telegram.org/bot{os.environ['TELEGRAM_BOT_TOKEN']}/sendMessage"
-payload = json.dumps({
-  'chat_id': os.environ['TELEGRAM_CHAT_ID'],
-  'text': os.environ['MESSAGE'],
-}).encode()
+payload = json.dumps({'chat_id': os.environ['TELEGRAM_CHAT_ID'], 'text': os.environ['MESSAGE']}).encode()
 req = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'})
 with urllib.request.urlopen(req) as r:
     print(r.read().decode())
