@@ -1,5 +1,28 @@
-"# Testing" 
+# Testing
 
-Direct only test Tue Mar 31 16:55:31 WIB 2026
+A simple C# console application used to test GitHub PR automation workflows.
 
-Direct only test Tue Mar 31 16:55:45 WIB 2026
+## Project
+
+- Solution: `HelloTesting.sln`
+- App: `src/HelloTesting`
+- Framework: .NET 8
+
+## Run
+
+```bash
+dotnet run --project src/HelloTesting -- Karim
+```
+
+Expected output:
+
+```text
+Hello, Karim!
+```
+
+## Purpose
+
+This repository is used to test:
+- automated PR review
+- Telegram notifications
+- merge workflow behavior
