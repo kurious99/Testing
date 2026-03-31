@@ -4,11 +4,10 @@ public sealed class Greeter
 {
     public string SayHello(string name)
     {
-        if (string.IsNullOrWhiteSpace(name))
-        {
-            return "Hello, world!";
-        }
+        var normalizedName = string.IsNullOrWhiteSpace(name)
+            ? "world"
+            : name.Trim();
 
-        return $"Hello, {name.Trim()}!";
+        return $"Hello, {normalizedName}!";
     }
 }
