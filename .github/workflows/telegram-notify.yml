@@ -1,0 +1,76 @@
+name: Telegram PR notify
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, closed, labeled]
+  pull_request_review:
+    types: [submitted]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build message
+        id: build
+        uses: actions/github-script@v7
+        with:
+          script: |
+            function emojiFor(payload) {
+              const pr = payload.pull_request;
+              if (!pr) return '🔔';
+              if (payload.action === 'closed' && pr.merged) return '✅';
+              if (pr.draft) return '📝';
+              if ((pr.labels || []).some(l => l.name === 'automerge')) return '🤖';
+              return '🔔';
+            }
+
+            const pr = context.payload.pull_request;
+            if (!pr) {
+              core.setOutput('skip', 'true');
+              return;
+            }
+
+            let lines = [];
+            const emoji = emojiFor(context.payload);
+            const action = context.payload.action;
+
+            lines.push(`${emoji} GitHub PR update`);
+            lines.push(`Repo: ${context.repo.owner}/${context.repo.repo}`);
+            lines.push(`PR #${pr.number} — ${pr.title}`);
+            lines.push(`Action: ${action}`);
+            lines.push(`State: ${pr.state}${pr.merged ? ' (merged)' : ''}`);
+            lines.push(`Draft: ${pr.draft ? 'yes' : 'no'}`);
+            lines.push(`Mergeable: ${pr.mergeable ?? 'unknown'}`);
+
+            const labels = (pr.labels || []).map(l => l.name);
+            if (labels.length) lines.push(`Labels: ${labels.join(', ')}`);
+
+            if (context.eventName === 'pull_request_review' && context.payload.review) {
+              lines.push(`Review: ${context.payload.review.state}`);
+            }
+
+            lines.push(`Link: ${pr.html_url}`);
+            core.setOutput('message', lines.join('\n'));
+
+      - name: Send Telegram message
+        if: steps.build.outputs.skip != 'true'
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          MESSAGE: ${{ steps.build.outputs.message }}
+        run: |
+          python3 - <<'PY'
+import json, os, urllib.request
+url = f"https://api.telegram.org/bot{os.environ['TELEGRAM_BOT_TOKEN']}/sendMessage"
+payload = json.dumps({
+  'chat_id': os.environ['TELEGRAM_CHAT_ID'],
+  'text': os.environ['MESSAGE'],
+}).encode()
+req = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'})
+with urllib.request.urlopen(req) as r:
+    print(r.read().decode())
+PY
