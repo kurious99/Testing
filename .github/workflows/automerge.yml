@@ -21,6 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Enable automerge on labeled PRs when checks pass
+        id: automerge
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -37,6 +38,7 @@ jobs:
             const pull_number = await getPullNumber();
             if (!pull_number) {
               core.info('No PR associated with this event.');
+              core.setOutput('telegram_message', '');
               return;
             }
 
@@ -45,15 +47,18 @@ jobs:
 
             if (!labels.includes('automerge')) {
               core.info('PR missing automerge label; skipping.');
+              core.setOutput('telegram_message', '');
               return;
             }
 
             if (pr.draft) {
               core.info('PR is draft; skipping.');
+              core.setOutput('telegram_message', '');
               return;
             }
 
             if (pr.mergeable_state === 'dirty') {
+              core.setOutput('telegram_message', `⚠️ PR #${pull_number} automerge blocked\nTitle: ${pr.title}\nReason: merge conflicts\nLink: ${pr.html_url}`);
               core.setFailed('PR has merge conflicts.');
               return;
             }
@@ -74,7 +79,28 @@ jobs:
                 }`,
                 { pullRequestId: pr.node_id }
               );
+              core.setOutput('telegram_message', `🤖 PR #${pull_number} automerge enabled\nTitle: ${pr.title}\nLabel: automerge\nLink: ${pr.html_url}`);
               core.info(`Auto-merge enabled for PR #${pull_number}`);
             } catch (e) {
+              core.setOutput('telegram_message', `⚠️ PR #${pull_number} automerge failed\nTitle: ${pr.title}\nReason: ${e.message}\nLink: ${pr.html_url}`);
               core.setFailed(`Failed to enable auto-merge: ${e.message}`);
             }
+
+      - name: Send Telegram automerge summary
+        if: always()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          MESSAGE: ${{ steps.automerge.outputs.telegram_message }}
+        run: |
+          python3 - <<'PY'
+          import json, os, urllib.request
+          msg = os.environ.get('MESSAGE', '').strip()
+          if not msg:
+              raise SystemExit(0)
+          url = f"https://api.telegram.org/bot{os.environ['TELEGRAM_BOT_TOKEN']}/sendMessage"
+          payload = json.dumps({'chat_id': os.environ['TELEGRAM_CHAT_ID'], 'text': msg}).encode()
+          req = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'})
+          with urllib.request.urlopen(req) as r:
+              print(r.read().decode())
+          PY

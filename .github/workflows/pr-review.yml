@@ -19,6 +19,7 @@ jobs:
           fetch-depth: 0
 
       - name: Analyze changed files and comment
+        id: review
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -34,7 +35,7 @@ jobs:
             const count = files.length;
             const additions = files.reduce((a, f) => a + (f.additions || 0), 0);
             const deletions = files.reduce((a, f) => a + (f.deletions || 0), 0);
-            const names = files.map(f => `- \`${f.filename}\``).join('\n');
+            const names = files.map(f => `- ${f.filename}`).join('\n');
 
             const sensitivePatterns = [/^\.github\//, /^package(-lock)?\.json$/, /^pnpm-lock\.yaml$/, /^yarn\.lock$/, /^Dockerfile$/, /^infra\//, /^scripts\//];
             const sensitive = files.filter(f => sensitivePatterns.some(r => r.test(f.filename))).map(f => f.filename);
@@ -70,8 +71,37 @@ jobs:
 
             await github.rest.issues.createComment({ owner, repo, issue_number: pull_number, body });
 
+            core.setOutput('telegram_message', [
+              `${verdict === 'PASS' ? '🤖' : '⚠️'} PR #${pull_number} auto review: ${verdict}`,
+              `Title: ${context.payload.pull_request.title}`,
+              `Files changed: ${count}`,
+              `Diff size: +${additions} / -${deletions}`,
+              `Reasons: ${reasons.length ? reasons.join('; ') : 'No policy issues detected'}`,
+              `Changed files:\n${names || '- None'}`,
+              `Link: ${context.payload.pull_request.html_url}`,
+            ].join('\n'));
+
             if (verdict === 'PASS') {
               await github.rest.issues.addLabels({ owner, repo, issue_number: pull_number, labels: ['automerge'] });
             } else {
               core.setFailed(`Manual review required: ${reasons.join('; ') || 'policy gate failed'}`);
             }
+
+      - name: Send Telegram review summary
+        if: always()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          MESSAGE: ${{ steps.review.outputs.telegram_message }}
+        run: |
+          python3 - <<'PY'
+          import json, os, urllib.request
+          msg = os.environ.get('MESSAGE', '').strip()
+          if not msg:
+              raise SystemExit(0)
+          url = f"https://api.telegram.org/bot{os.environ['TELEGRAM_BOT_TOKEN']}/sendMessage"
+          payload = json.dumps({'chat_id': os.environ['TELEGRAM_CHAT_ID'], 'text': msg}).encode()
+          req = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'})
+          with urllib.request.urlopen(req) as r:
+              print(r.read().decode())
+          PY
