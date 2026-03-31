@@ -2,7 +2,7 @@ name: Auto review and merge
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, labeled, ready_for_review]
+    types: [labeled, synchronize, reopened, ready_for_review]
   pull_request_review:
     types: [submitted]
   check_suite:
@@ -44,9 +44,17 @@ jobs:
 
             const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number });
             const labels = (pr.labels || []).map(l => l.name);
+            const action = context.payload.action || '';
+            const addedLabel = context.payload.label?.name || '';
 
             if (!labels.includes('automerge')) {
               core.info('PR missing automerge label; skipping.');
+              core.setOutput('telegram_message', '');
+              return;
+            }
+
+            if (action === 'labeled' && addedLabel && addedLabel !== 'automerge') {
+              core.info(`Ignoring unrelated label event: ${addedLabel}`);
               core.setOutput('telegram_message', '');
               return;
             }
