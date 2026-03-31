@@ -42,6 +42,7 @@ jobs:
 
             let verdict = 'PASS';
             let reasons = [];
+            let findings = [];
 
             if (count > 20) {
               verdict = 'MANUAL_REVIEW';
@@ -56,6 +57,29 @@ jobs:
               reasons.push(`Sensitive files changed: ${sensitive.join(', ')}`);
             }
 
+            for (const f of files) {
+              if (!f.filename.endsWith('.cs')) continue;
+              const patch = f.patch || '';
+              if (!patch) continue;
+
+              if (/\+\s*return\s+\d+\s*;/.test(patch)) {
+                verdict = 'REQUEST_CHANGES';
+                reasons.push(`Suspicious numeric return in ${f.filename}`);
+                findings.push(`${f.filename}: method appears to return a numeric literal directly; likely wrong return type or placeholder logic.`);
+              }
+              if (/\+.*throw\s+new\s+NotImplementedException\s*\(/.test(patch)) {
+                verdict = 'REQUEST_CHANGES';
+                reasons.push(`NotImplementedException introduced in ${f.filename}`);
+                findings.push(`${f.filename}: new NotImplementedException introduced.`);
+              }
+              if (/\+.*ToUpper\(\)/.test(patch) && !/StringComparison/.test(patch)) {
+                findings.push(`${f.filename}: check whether culture-sensitive casing is intended.`);
+              }
+              if (/\+.*name\./.test(patch) && !/string\.IsNullOrWhiteSpace\(name\)/.test(patch) && !/name\s*\?\./.test(patch)) {
+                findings.push(`${f.filename}: possible null-handling issue if name can be null.`);
+              }
+            }
+
             const body = [
               '## Automated PR review',
               '',
@@ -63,7 +87,9 @@ jobs:
               `**Files changed:** ${count}`,
               `**Diff size:** +${additions} / -${deletions}`,
               '',
-              reasons.length ? `**Reasons:**\n${reasons.map(r => `- ${r}`).join('\n')}` : '**Reasons:**\n- No policy issues detected',
+              reasons.length ? `**Reasons:**\n${reasons.map(r => `- ${r}`).join('\n')}` : '**Reasons:**\n- No blocking policy issues detected',
+              '',
+              findings.length ? `**Findings:**\n${findings.map(f => `- ${f}`).join('\n')}` : '**Findings:**\n- No notable code-review findings',
               '',
               '**Changed files:**',
               names || '- None'
@@ -76,7 +102,8 @@ jobs:
               `Title: ${context.payload.pull_request.title}`,
               `Files changed: ${count}`,
               `Diff size: +${additions} / -${deletions}`,
-              `Reasons: ${reasons.length ? reasons.join('; ') : 'No policy issues detected'}`,
+              `Reasons: ${reasons.length ? reasons.join('; ') : 'No blocking policy issues detected'}`,
+              `Findings: ${findings.length ? findings.join('; ') : 'No notable code-review findings'}`,
               `Changed files:\n${names || '- None'}`,
               `Link: ${context.payload.pull_request.html_url}`,
             ].join('\n'));
@@ -84,7 +111,7 @@ jobs:
             if (verdict === 'PASS') {
               await github.rest.issues.addLabels({ owner, repo, issue_number: pull_number, labels: ['automerge'] });
             } else {
-              core.setFailed(`Manual review required: ${reasons.join('; ') || 'policy gate failed'}`);
+              core.setFailed(`Review blocked: ${reasons.join('; ') || 'manual review required'}`);
             }
 
       - name: Send Telegram review summary
