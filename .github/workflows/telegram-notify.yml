@@ -19,42 +19,58 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            function emojiFor(payload) {
-              const pr = payload.pull_request;
-              if (!pr) return '🔔';
-              if (payload.action === 'closed' && pr.merged) return '✅';
-              if (pr.draft) return '📝';
-              if ((pr.labels || []).some(l => l.name === 'automerge')) return '🤖';
-              return '🔔';
-            }
-
             const pr = context.payload.pull_request;
             if (!pr) {
               core.setOutput('skip', 'true');
               return;
             }
 
-            let lines = [];
-            const emoji = emojiFor(context.payload);
             const action = context.payload.action;
-
-            lines.push(`${emoji} GitHub PR update`);
-            lines.push(`Repo: ${context.repo.owner}/${context.repo.repo}`);
-            lines.push(`PR #${pr.number} — ${pr.title}`);
-            lines.push(`Action: ${action}`);
-            lines.push(`State: ${pr.state}${pr.merged ? ' (merged)' : ''}`);
-            lines.push(`Draft: ${pr.draft ? 'yes' : 'no'}`);
-            lines.push(`Mergeable: ${pr.mergeable ?? 'unknown'}`);
-
             const labels = (pr.labels || []).map(l => l.name);
-            if (labels.length) lines.push(`Labels: ${labels.join(', ')}`);
+            const hasAutomerge = labels.includes('automerge');
+            let emoji = '🔔';
+            let headline = `PR #${pr.number} updated`;
+            let details = [];
 
             if (context.eventName === 'pull_request_review' && context.payload.review) {
-              lines.push(`Review: ${context.payload.review.state}`);
+              const reviewState = context.payload.review.state;
+              emoji = reviewState === 'approved' ? '✅' : reviewState === 'changes_requested' ? '⚠️' : '💬';
+              headline = `PR #${pr.number} review: ${reviewState}`;
+              details.push(`Title: ${pr.title}`);
+            } else if (action === 'opened') {
+              emoji = '🆕';
+              headline = `PR #${pr.number} opened`;
+            } else if (action === 'synchronize') {
+              emoji = '🔄';
+              headline = `PR #${pr.number} updated with new commits`;
+            } else if (action === 'ready_for_review') {
+              emoji = '👀';
+              headline = `PR #${pr.number} ready for review`;
+            } else if (action === 'reopened') {
+              emoji = '♻️';
+              headline = `PR #${pr.number} reopened`;
+            } else if (action === 'labeled' && context.payload.label?.name === 'automerge') {
+              emoji = '🤖';
+              headline = `PR #${pr.number} automerge enabled`;
+            } else if (action === 'closed' && pr.merged) {
+              emoji = '✅';
+              headline = `PR #${pr.number} merged`;
+            } else if (action === 'closed') {
+              emoji = '❌';
+              headline = `PR #${pr.number} closed`;
             }
 
-            lines.push(`Link: ${pr.html_url}`);
-            core.setOutput('message', lines.join('\n'));
+            details.push(`Title: ${pr.title}`);
+            details.push(`State: ${pr.state}${pr.merged ? ' (merged)' : ''}`);
+            if (hasAutomerge) details.push(`Labels: ${labels.join(', ')}`);
+            details.push(`Link: ${pr.html_url}`);
+
+            const message = [
+              `${emoji} ${headline}`,
+              ...details,
+            ].join('\n');
+
+            core.setOutput('message', message);
 
       - name: Send Telegram message
         if: steps.build.outputs.skip != 'true'
