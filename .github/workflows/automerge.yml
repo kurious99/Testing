@@ -1,13 +1,11 @@
 name: Auto review and merge
 
 on:
-  pull_request:
-    types: [labeled, synchronize, reopened, ready_for_review]
-  pull_request_review:
-    types: [submitted]
   check_suite:
     types: [completed]
   status: {}
+  pull_request:
+    types: [labeled]
 
 permissions:
   contents: write
@@ -17,7 +15,6 @@ permissions:
 
 jobs:
   automerge:
-    if: github.event.pull_request.draft == false || github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - name: Merge labeled PRs when checks pass
@@ -42,42 +39,41 @@ jobs:
               return;
             }
 
+            if (context.payload.action === 'labeled' && context.payload.label?.name && context.payload.label.name !== 'automerge') {
+              core.info(`Ignoring unrelated label event: ${context.payload.label.name}`);
+              core.setOutput('telegram_message', '');
+              return;
+            }
+
             const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number });
             const labels = (pr.labels || []).map(l => l.name);
-            const action = context.payload.action || '';
-            const addedLabel = context.payload.label?.name || '';
 
             if (!labels.includes('automerge')) {
               core.info('PR missing automerge label; skipping.');
               core.setOutput('telegram_message', '');
               return;
             }
-
-            if (action === 'labeled' && addedLabel && addedLabel !== 'automerge') {
-              core.info(`Ignoring unrelated label event: ${addedLabel}`);
-              core.setOutput('telegram_message', '');
-              return;
-            }
-
             if (pr.draft) {
               core.info('PR is draft; skipping.');
               core.setOutput('telegram_message', '');
               return;
             }
-
             if (pr.mergeable_state === 'dirty') {
               core.setOutput('telegram_message', `⚠️ PR #${pull_number} merge blocked\nTitle: ${pr.title}\nReason: merge conflicts\nLink: ${pr.html_url}`);
               core.setFailed('PR has merge conflicts.');
               return;
             }
 
-            const { data: combined } = await github.rest.repos.getCombinedStatusForRef({
+            const checks = await github.paginate(github.rest.checks.listForRef, {
               owner,
               repo,
               ref: pr.head.sha,
+              per_page: 100,
             });
-            if (combined.state && combined.state !== 'success') {
-              core.info(`Combined status is ${combined.state}; waiting.`);
+            const relevant = checks.filter(c => ['review', 'notify'].includes(c.name) || ['PR review gate', 'telegram-notify'].includes(c.app?.name || ''));
+            const incomplete = relevant.filter(c => c.status !== 'completed' || c.conclusion !== 'success');
+            if (incomplete.length) {
+              core.info(`Checks still not ready: ${incomplete.map(c => `${c.name}:${c.status}/${c.conclusion}`).join(', ')}`);
               core.setOutput('telegram_message', '');
               return;
             }
