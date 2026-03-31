@@ -20,7 +20,7 @@ jobs:
     if: github.event.pull_request.draft == false || github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - name: Enable automerge on labeled PRs when checks pass
+      - name: Merge labeled PRs when checks pass
         id: automerge
         uses: actions/github-script@v7
         with:
@@ -58,35 +58,37 @@ jobs:
             }
 
             if (pr.mergeable_state === 'dirty') {
-              core.setOutput('telegram_message', `⚠️ PR #${pull_number} automerge blocked\nTitle: ${pr.title}\nReason: merge conflicts\nLink: ${pr.html_url}`);
+              core.setOutput('telegram_message', `⚠️ PR #${pull_number} merge blocked\nTitle: ${pr.title}\nReason: merge conflicts\nLink: ${pr.html_url}`);
               core.setFailed('PR has merge conflicts.');
               return;
             }
 
-            await github.rest.issues.createComment({
+            const { data: combined } = await github.rest.repos.getCombinedStatusForRef({
               owner,
               repo,
-              issue_number: pull_number,
-              body: 'Auto-review bot checked this PR. If all required checks pass, GitHub auto-merge will complete it automatically.'
+              ref: pr.head.sha,
             });
-
-            try {
-              await github.graphql(
-                `mutation($pullRequestId:ID!) {
-                  enablePullRequestAutoMerge(input: {pullRequestId: $pullRequestId, mergeMethod: SQUASH}) {
-                    pullRequest { number }
-                  }
-                }`,
-                { pullRequestId: pr.node_id }
-              );
-              core.setOutput('telegram_message', `🤖 PR #${pull_number} automerge enabled\nTitle: ${pr.title}\nLabel: automerge\nLink: ${pr.html_url}`);
-              core.info(`Auto-merge enabled for PR #${pull_number}`);
-            } catch (e) {
-              core.setOutput('telegram_message', `⚠️ PR #${pull_number} automerge failed\nTitle: ${pr.title}\nReason: ${e.message}\nLink: ${pr.html_url}`);
-              core.setFailed(`Failed to enable auto-merge: ${e.message}`);
+            if (combined.state && combined.state !== 'success') {
+              core.info(`Combined status is ${combined.state}; waiting.`);
+              core.setOutput('telegram_message', '');
+              return;
             }
 
-      - name: Send Telegram automerge summary
+            try {
+              await github.rest.pulls.merge({
+                owner,
+                repo,
+                pull_number,
+                merge_method: 'squash',
+              });
+              core.setOutput('telegram_message', `✅ PR #${pull_number} merged automatically\nTitle: ${pr.title}\nMethod: squash\nLink: ${pr.html_url}`);
+              core.info(`Merged PR #${pull_number}`);
+            } catch (e) {
+              core.setOutput('telegram_message', `⚠️ PR #${pull_number} merge failed\nTitle: ${pr.title}\nReason: ${e.message}\nLink: ${pr.html_url}`);
+              core.setFailed(`Failed to merge PR: ${e.message}`);
+            }
+
+      - name: Send Telegram merge summary
         if: always()
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
