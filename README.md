@@ -1,36 +1,22 @@
 # Testing
 
-A simple C# console application used to test GitHub PR automation workflows.
+Simple ASP.NET Core Web API built with .NET 8.
 
-## Project
+## Endpoints
 
-- Solution: `HelloTesting.sln`
-- App: `src/HelloTesting`
-- Framework: .NET 8
+- `GET /` — basic info
+- `GET /health` — health check
+- `GET /api/greetings/{name}` — greeting endpoint
 
-## Run
+## Run locally
 
 ```bash
-dotnet run --project src/HelloTesting -- Karim
+dotnet restore HelloTesting.sln
+dotnet run --project src/HelloTesting/HelloTesting.csproj
 ```
 
-Expected output:
+## Publish
 
-```text
-Hello, Karim!
+```bash
+dotnet publish src/HelloTesting/HelloTesting.csproj -c Release -o publish
 ```
-
-## Purpose
-
-This repository is used to test:
-- automated PR review
-- Telegram notifications
-- merge workflow behavior
-
-Deploy test at 2026-04-01 11:05 WIB
-
-Deploy retry at 2026-04-01 11:24 WIB
-
-Manual runner test at 2026-04-01 11:28 WIB
-
-Manual-only runner test at 2026-04-01 11:30 WIB
