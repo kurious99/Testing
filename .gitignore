@@ -1,0 +1,42 @@
+# Build results
+bin/
+obj/
+out/
+publish/
+
+# User-specific files
+*.user
+*.rsuser
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Visual Studio
+.vs/
+
+# Rider / JetBrains
+.idea/
+
+# VS Code
+.vscode/
+
+# NuGet
+*.nupkg
+packages/
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment files
+.env
+.env.*
+
+# Coverage / test results
+TestResults/
+coverage/
+*.coverage
+*.coveragexml
