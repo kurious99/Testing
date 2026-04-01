@@ -2,13 +2,8 @@ namespace HelloTesting;
 
 public sealed class Greeter
 {
-    public string SayHello(string name)
+    public int SayHello(string name)
     {
-        if (string.IsNullOrWhiteSpace(name))
-        {
-            return "Hello, world!";
-        }
-
-        return $"Hello, {name.Trim()}!";
+        return 123;
     }
 }
