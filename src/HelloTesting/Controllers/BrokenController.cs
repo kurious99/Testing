@@ -9,6 +9,6 @@ public sealed class BrokenController : ControllerBase
     [HttpGet]
     public IActionResult Get()
     {
-        return Ok(new { message = "fixed" });
+        return Ok(123);
     }
 }
