@@ -7,8 +7,8 @@ using Microsoft.AspNetCore.Mvc;
 public sealed class BrokenController : ControllerBase
 {
     [HttpGet]
-    public int Get()
+    public IActionResult Get()
     {
-        return 123;
+        return Ok(new { message = "fixed" });
     }
 }
