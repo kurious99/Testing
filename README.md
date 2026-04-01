@@ -32,3 +32,5 @@ Deploy test at 2026-04-01 11:05 WIB
 Deploy retry at 2026-04-01 11:24 WIB
 
 Manual runner test at 2026-04-01 11:28 WIB
+
+Manual-only runner test at 2026-04-01 11:30 WIB
