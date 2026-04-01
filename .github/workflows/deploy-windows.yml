@@ -8,7 +8,7 @@ permissions:
   contents: read
 
 jobs:
-  publish-and-copy:
+  publish-and-deploy:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -43,7 +43,7 @@ jobs:
           WINDOWS_PASSWORD: ${{ secrets.WINDOWS_PASSWORD }}
           WINDOWS_TARGET_PATH: ${{ secrets.WINDOWS_TARGET_PATH }}
         run: |
-          sshpass -p "$WINDOWS_PASSWORD" ssh -o StrictHostKeyChecking=no "$WINDOWS_USERNAME@$WINDOWS_HOST" "powershell -NoProfile -Command \"New-Item -ItemType Directory -Force -Path '$WINDOWS_TARGET_PATH'\""
+          sshpass -p "$WINDOWS_PASSWORD" ssh -o StrictHostKeyChecking=no "$WINDOWS_USERNAME@$WINDOWS_HOST" "powershell -NoProfile -Command \"New-Item -ItemType Directory -Force -Path '$WINDOWS_TARGET_PATH' | Out-Null\""
 
       - name: Copy publish zip to Windows server
         env:
@@ -53,3 +53,22 @@ jobs:
           WINDOWS_TARGET_PATH: ${{ secrets.WINDOWS_TARGET_PATH }}
         run: |
           sshpass -p "$WINDOWS_PASSWORD" scp -o StrictHostKeyChecking=no HelloTesting-win-x64.zip "$WINDOWS_USERNAME@$WINDOWS_HOST:$WINDOWS_TARGET_PATH/HelloTesting-win-x64.zip"
+
+      - name: Extract and replace existing deployment
+        env:
+          WINDOWS_HOST: ${{ secrets.WINDOWS_HOST }}
+          WINDOWS_USERNAME: ${{ secrets.WINDOWS_USERNAME }}
+          WINDOWS_PASSWORD: ${{ secrets.WINDOWS_PASSWORD }}
+          WINDOWS_TARGET_PATH: ${{ secrets.WINDOWS_TARGET_PATH }}
+        run: |
+          sshpass -p "$WINDOWS_PASSWORD" ssh -o StrictHostKeyChecking=no "$WINDOWS_USERNAME@$WINDOWS_HOST" "powershell -NoProfile -Command \"
+          \$target = '$WINDOWS_TARGET_PATH';
+          \$zip = Join-Path \$target 'HelloTesting-win-x64.zip';
+          \$staging = Join-Path \$target '_staging';
+          if (Test-Path \$staging) { Remove-Item -Recurse -Force \$staging }
+          New-Item -ItemType Directory -Force -Path \$staging | Out-Null
+          Expand-Archive -Path \$zip -DestinationPath \$staging -Force
+          Get-ChildItem -Path \$target -Force | Where-Object { \$_.Name -notin @('HelloTesting-win-x64.zip','_staging') } | Remove-Item -Recurse -Force
+          Get-ChildItem -Path \$staging -Force | ForEach-Object { Move-Item -Force \$_.FullName \$target }
+          Remove-Item -Recurse -Force \$staging
+          \""
