@@ -1,0 +1,55 @@
+name: deploy-windows
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  publish-and-copy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore
+        run: dotnet restore HelloTesting.sln
+
+      - name: Build
+        run: dotnet build HelloTesting.sln --configuration Release --no-restore
+
+      - name: Publish win-x64 single-file
+        run: dotnet publish src/HelloTesting/HelloTesting.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o publish/win-x64
+
+      - name: Zip publish output
+        run: |
+          cd publish/win-x64
+          zip -r ../../HelloTesting-win-x64.zip .
+
+      - name: Install sshpass
+        run: sudo apt-get update && sudo apt-get install -y sshpass
+
+      - name: Ensure target directory exists on Windows server
+        env:
+          WINDOWS_HOST: ${{ secrets.WINDOWS_HOST }}
+          WINDOWS_USERNAME: ${{ secrets.WINDOWS_USERNAME }}
+          WINDOWS_PASSWORD: ${{ secrets.WINDOWS_PASSWORD }}
+          WINDOWS_TARGET_PATH: ${{ secrets.WINDOWS_TARGET_PATH }}
+        run: |
+          sshpass -p "$WINDOWS_PASSWORD" ssh -o StrictHostKeyChecking=no "$WINDOWS_USERNAME@$WINDOWS_HOST" "powershell -NoProfile -Command \"New-Item -ItemType Directory -Force -Path '$WINDOWS_TARGET_PATH'\""
+
+      - name: Copy publish zip to Windows server
+        env:
+          WINDOWS_HOST: ${{ secrets.WINDOWS_HOST }}
+          WINDOWS_USERNAME: ${{ secrets.WINDOWS_USERNAME }}
+          WINDOWS_PASSWORD: ${{ secrets.WINDOWS_PASSWORD }}
+          WINDOWS_TARGET_PATH: ${{ secrets.WINDOWS_TARGET_PATH }}
+        run: |
+          sshpass -p "$WINDOWS_PASSWORD" scp -o StrictHostKeyChecking=no HelloTesting-win-x64.zip "$WINDOWS_USERNAME@$WINDOWS_HOST:$WINDOWS_TARGET_PATH/HelloTesting-win-x64.zip"
