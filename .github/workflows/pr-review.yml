@@ -54,21 +54,26 @@ jobs:
 
             let verdict = 'MANUAL_REVIEW';
             let summary = 'AI review did not run.';
+            let confidence = 'low';
+            let blockingIssues = [];
+            let nonBlockingSuggestions = [];
             let reasons = ['OPENAI_API_KEY secret is missing.'];
-            let findings = [];
 
             if (process.env.OPENAI_API_KEY) {
               const model = process.env.OPENAI_MODEL || 'gpt-4o-mini';
               const prompt = [
                 'You are an experienced senior software engineer reviewing a GitHub pull request.',
-                'Review the diff like a human reviewer.',
-                'Focus on correctness, code smell, maintainability, API design, null safety, dead code, suspicious logic, and unnecessary complexity.',
-                'Be strict but fair. Do not invent issues if the code is fine.',
+                'Review the diff like a careful human reviewer.',
+                'Focus on correctness, maintainability, dead code, placeholder logic, API design, naming, null safety, suspicious logic, and unnecessary complexity.',
+                'Be strict but fair. Do not invent issues if the code is acceptable.',
+                'Distinguish between blocking problems and non-blocking suggestions.',
+                'Small issues like an unused variable, naming nit, or cleanup suggestion should usually NOT produce REQUEST_CHANGES by themselves.',
+                'Use REQUEST_CHANGES only for likely bugs, broken behavior, dangerous logic, dead code that clearly should not ship, incorrect API contracts, or seriously poor implementation.',
+                'Use MANUAL_REVIEW for low-confidence review, very large diffs, very sensitive changes, or ambiguous risky cases.',
+                'Use PASS when the code is acceptable, even if there are small non-blocking suggestions.',
+                'Assign a severity for each issue: CRITICAL, HIGH, MEDIUM, LOW, or INFO.',
                 'Return ONLY valid JSON with this exact schema:',
-                '{"verdict":"PASS|REQUEST_CHANGES|MANUAL_REVIEW","summary":"string","reasons":["string"],"findings":["string"]}',
-                'Use REQUEST_CHANGES when there is a likely bug, dead code, placeholder logic, broken API contract, or clearly poor implementation.',
-                'Use MANUAL_REVIEW when the diff is too large, too sensitive, or confidence is low.',
-                'Use PASS when the change looks acceptable.',
+                '{"verdict":"PASS|REQUEST_CHANGES|MANUAL_REVIEW","summary":"string","confidence":"high|medium|low","reasons":["string"],"blockingIssues":[{"severity":"CRITICAL|HIGH|MEDIUM|LOW|INFO","file":"string","title":"string","details":"string"}],"nonBlockingSuggestions":[{"severity":"CRITICAL|HIGH|MEDIUM|LOW|INFO","file":"string","title":"string","details":"string"}]}',
                 '',
                 `PR title: ${pr.title}`,
                 `PR body: ${pr.body || ''}`,
@@ -87,6 +92,7 @@ jobs:
                 body: JSON.stringify({
                   model,
                   temperature: 0.1,
+                  response_format: { type: 'json_object' },
                   messages: [
                     { role: 'system', content: 'You are a concise and accurate pull request reviewer.' },
                     { role: 'user', content: prompt }
@@ -104,22 +110,45 @@ jobs:
               const parsed = JSON.parse(content);
 
               verdict = ['PASS', 'REQUEST_CHANGES', 'MANUAL_REVIEW'].includes(parsed.verdict) ? parsed.verdict : 'MANUAL_REVIEW';
+              confidence = ['high', 'medium', 'low'].includes(parsed.confidence) ? parsed.confidence : 'low';
               summary = parsed.summary || 'No summary provided.';
               reasons = Array.isArray(parsed.reasons) ? parsed.reasons : [];
-              findings = Array.isArray(parsed.findings) ? parsed.findings : [];
+              blockingIssues = Array.isArray(parsed.blockingIssues) ? parsed.blockingIssues : [];
+              nonBlockingSuggestions = Array.isArray(parsed.nonBlockingSuggestions) ? parsed.nonBlockingSuggestions : [];
+
+              if (verdict === 'REQUEST_CHANGES' && blockingIssues.length === 0) {
+                verdict = 'MANUAL_REVIEW';
+                reasons.push('AI returned REQUEST_CHANGES without explicit blocking issues, so this was downgraded to MANUAL_REVIEW.');
+              }
             }
+
+            const formatIssues = (items) => {
+              if (!items.length) return '- None';
+              return items.map(item => {
+                const sev = item.severity || 'INFO';
+                const file = item.file || 'unknown';
+                const title = item.title || 'Untitled issue';
+                const details = item.details || 'No details provided.';
+                return `- [${sev}] ${file} — ${title}: ${details}`;
+              }).join('\n');
+            };
 
             const body = [
               '## AI PR review',
               '',
               `**Verdict:** ${verdict}`,
+              `**Confidence:** ${confidence}`,
               `**Summary:** ${summary}`,
               `**Files changed:** ${count}`,
               `**Diff size:** +${additions} / -${deletions}`,
               '',
               reasons.length ? `**Reasons:**\n${reasons.map(r => `- ${r}`).join('\n')}` : '**Reasons:**\n- None',
               '',
-              findings.length ? `**Findings:**\n${findings.map(f => `- ${f}`).join('\n')}` : '**Findings:**\n- No notable findings',
+              '**Blocking issues:**',
+              formatIssues(blockingIssues),
+              '',
+              '**Non-blocking suggestions:**',
+              formatIssues(nonBlockingSuggestions),
               '',
               '**Changed files:**',
               names || '- None'
@@ -128,21 +157,25 @@ jobs:
             await github.rest.issues.createComment({ owner, repo, issue_number: pull_number, body });
 
             core.setOutput('telegram_message', [
-              `${verdict === 'PASS' ? '🤖' : '⚠️'} PR #${pull_number} AI review: ${verdict}`,
+              `${verdict === 'PASS' ? '🤖' : verdict === 'MANUAL_REVIEW' ? '🟡' : '⚠️'} PR #${pull_number} AI review: ${verdict}`,
               `Title: ${pr.title}`,
+              `Confidence: ${confidence}`,
               `Summary: ${summary}`,
               `Files changed: ${count}`,
               `Diff size: +${additions} / -${deletions}`,
               `Reasons: ${reasons.length ? reasons.join('; ') : 'None'}`,
-              `Findings: ${findings.length ? findings.join('; ') : 'No notable findings'}`,
+              `Blocking issues: ${blockingIssues.length}`,
+              `Non-blocking suggestions: ${nonBlockingSuggestions.length}`,
               `Changed files:\n${names || '- None'}`,
               `Link: ${pr.html_url}`,
             ].join('\n'));
 
             if (verdict === 'PASS') {
               await github.rest.issues.addLabels({ owner, repo, issue_number: pull_number, labels: ['automerge'] });
+            } else if (verdict === 'REQUEST_CHANGES') {
+              core.setFailed(`Review blocked: ${reasons.join('; ') || summary || 'blocking issues found'}`);
             } else {
-              core.setFailed(`Review blocked: ${reasons.join('; ') || summary || 'manual review required'}`);
+              core.warning(`Manual review requested: ${reasons.join('; ') || summary || 'manual review required'}`);
             }
 
       - name: Send Telegram review summary
