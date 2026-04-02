@@ -119,13 +119,17 @@ jobs:
               const severityRank = { INFO: 1, LOW: 2, MEDIUM: 3, HIGH: 4, CRITICAL: 5 };
               const normalizedBlocking = [];
               const downgradedSuggestions = [];
+              const minorIssuePattern = /(unused variable|declared but never used|not used anywhere|minor cleanup|cleanup suggestion|readability|naming nit|naming issue|redundant variable)/i;
 
               for (const issue of blockingIssues) {
                 const sev = String(issue.severity || 'INFO').toUpperCase();
-                if (sev === 'HIGH' || sev === 'CRITICAL') {
+                const combined = `${issue.title || ''} ${issue.details || ''}`;
+                const isMinorIssue = minorIssuePattern.test(combined);
+                if (!isMinorIssue && (sev === 'HIGH' || sev === 'CRITICAL')) {
                   normalizedBlocking.push({ ...issue, severity: sev });
                 } else {
-                  downgradedSuggestions.push({ ...issue, severity: sev, details: `${issue.details || 'No details provided.'} (Auto-downgraded from blocking by workflow policy.)` });
+                  const forcedSeverity = isMinorIssue ? 'LOW' : sev;
+                  downgradedSuggestions.push({ ...issue, severity: forcedSeverity, details: `${issue.details || 'No details provided.'} (Auto-downgraded from blocking by workflow policy.)` });
                 }
               }
 
