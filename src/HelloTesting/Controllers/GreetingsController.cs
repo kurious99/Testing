@@ -13,7 +13,7 @@ public sealed class GreetingsController : ControllerBase
 
         return Ok(new
         {
-            message = "Hello from GreetingsController"
+            message = "Hello from GreetingsController v2"
         });
     }
 
