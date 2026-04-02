@@ -116,9 +116,40 @@ jobs:
               blockingIssues = Array.isArray(parsed.blockingIssues) ? parsed.blockingIssues : [];
               nonBlockingSuggestions = Array.isArray(parsed.nonBlockingSuggestions) ? parsed.nonBlockingSuggestions : [];
 
+              const severityRank = { INFO: 1, LOW: 2, MEDIUM: 3, HIGH: 4, CRITICAL: 5 };
+              const normalizedBlocking = [];
+              const downgradedSuggestions = [];
+
+              for (const issue of blockingIssues) {
+                const sev = String(issue.severity || 'INFO').toUpperCase();
+                if (sev === 'HIGH' || sev === 'CRITICAL') {
+                  normalizedBlocking.push({ ...issue, severity: sev });
+                } else {
+                  downgradedSuggestions.push({ ...issue, severity: sev, details: `${issue.details || 'No details provided.'} (Auto-downgraded from blocking by workflow policy.)` });
+                }
+              }
+
+              blockingIssues = normalizedBlocking;
+              nonBlockingSuggestions = [...nonBlockingSuggestions, ...downgradedSuggestions];
+
+              const highestBlockingSeverity = blockingIssues.reduce((max, issue) => {
+                const sev = String(issue.severity || 'INFO').toUpperCase();
+                return Math.max(max, severityRank[sev] || 0);
+              }, 0);
+
+              const hasMediumSuggestion = nonBlockingSuggestions.some(issue => String(issue.severity || 'INFO').toUpperCase() === 'MEDIUM');
+
+              if (highestBlockingSeverity >= severityRank.HIGH) {
+                verdict = 'REQUEST_CHANGES';
+              } else if (hasMediumSuggestion || verdict === 'MANUAL_REVIEW') {
+                verdict = 'MANUAL_REVIEW';
+              } else {
+                verdict = 'PASS';
+              }
+
               if (verdict === 'REQUEST_CHANGES' && blockingIssues.length === 0) {
                 verdict = 'MANUAL_REVIEW';
-                reasons.push('AI returned REQUEST_CHANGES without explicit blocking issues, so this was downgraded to MANUAL_REVIEW.');
+                reasons.push('AI returned REQUEST_CHANGES without high-severity blocking issues, so this was downgraded to MANUAL_REVIEW.');
               }
             }
 
