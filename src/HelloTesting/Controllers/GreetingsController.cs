@@ -15,6 +15,15 @@ public sealed class GreetingsController : ControllerBase
         });
     }
 
+    [HttpGet]
+    public IActionResult Get2()
+    {
+        return Ok(new
+        {
+            message = "Hello from GreetingsController"
+        });
+    }
+
     [HttpGet("{name}")]
     public IActionResult GetByName(string name)
     {
