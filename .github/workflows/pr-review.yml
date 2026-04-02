@@ -137,11 +137,15 @@ jobs:
                 return Math.max(max, severityRank[sev] || 0);
               }, 0);
 
-              const hasMediumSuggestion = nonBlockingSuggestions.some(issue => String(issue.severity || 'INFO').toUpperCase() === 'MEDIUM');
+              const sensitivePatterns = [/^\.github\//, /^package(-lock)?\.json$/, /^pnpm-lock\.yaml$/, /^yarn\.lock$/, /^Dockerfile$/, /^infra\//, /^scripts\//];
+              const sensitiveChanged = compactFiles.some(f => sensitivePatterns.some(r => r.test(f.filename)));
+              const diffTooLarge = count > 20 || (additions + deletions) > 400;
+              const lowConfidence = confidence === 'low';
+              const explicitManual = verdict === 'MANUAL_REVIEW';
 
               if (highestBlockingSeverity >= severityRank.HIGH) {
                 verdict = 'REQUEST_CHANGES';
-              } else if (hasMediumSuggestion || verdict === 'MANUAL_REVIEW') {
+              } else if (explicitManual && (lowConfidence || diffTooLarge || sensitiveChanged)) {
                 verdict = 'MANUAL_REVIEW';
               } else {
                 verdict = 'PASS';
@@ -150,6 +154,11 @@ jobs:
               if (verdict === 'REQUEST_CHANGES' && blockingIssues.length === 0) {
                 verdict = 'MANUAL_REVIEW';
                 reasons.push('AI returned REQUEST_CHANGES without high-severity blocking issues, so this was downgraded to MANUAL_REVIEW.');
+              }
+
+              if (verdict === 'MANUAL_REVIEW' && !(lowConfidence || diffTooLarge || sensitiveChanged)) {
+                verdict = 'PASS';
+                reasons.push('Workflow policy downgraded MANUAL_REVIEW to PASS because there are no high-severity blocking issues and no strong risk signals.');
               }
             }
 
