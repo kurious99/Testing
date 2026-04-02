@@ -14,7 +14,7 @@ public sealed class GreetingsController : ControllerBase
         return Ok(new
         {
             message = "Hello from GreetingsController",
-            version = "v1"
+            version = "v2"
         });
     }
 
