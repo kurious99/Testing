@@ -18,18 +18,25 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Analyze changed files and comment
+      - name: AI review PR diff
         id: review
         uses: actions/github-script@v7
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: ${{ secrets.OPENAI_MODEL }}
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const owner = context.repo.owner;
             const repo = context.repo.repo;
             const pull_number = context.payload.pull_request.number;
+            const pr = context.payload.pull_request;
 
             const files = await github.paginate(github.rest.pulls.listFiles, {
-              owner, repo, pull_number, per_page: 100
+              owner,
+              repo,
+              pull_number,
+              per_page: 100,
             });
 
             const count = files.length;
@@ -37,59 +44,82 @@ jobs:
             const deletions = files.reduce((a, f) => a + (f.deletions || 0), 0);
             const names = files.map(f => `- ${f.filename}`).join('\n');
 
-            const sensitivePatterns = [/^\.github\//, /^package(-lock)?\.json$/, /^pnpm-lock\.yaml$/, /^yarn\.lock$/, /^Dockerfile$/, /^infra\//, /^scripts\//];
-            const sensitive = files.filter(f => sensitivePatterns.some(r => r.test(f.filename))).map(f => f.filename);
+            const compactFiles = files.map(f => ({
+              filename: f.filename,
+              status: f.status,
+              additions: f.additions,
+              deletions: f.deletions,
+              patch: f.patch || ''
+            }));
 
-            let verdict = 'PASS';
-            let reasons = [];
+            let verdict = 'MANUAL_REVIEW';
+            let summary = 'AI review did not run.';
+            let reasons = ['OPENAI_API_KEY secret is missing.'];
             let findings = [];
 
-            if (count > 20) {
-              verdict = 'MANUAL_REVIEW';
-              reasons.push(`Changed files too many: ${count}`);
-            }
-            if ((additions + deletions) > 400) {
-              verdict = 'MANUAL_REVIEW';
-              reasons.push(`Diff too large: +${additions}/-${deletions}`);
-            }
-            if (sensitive.length) {
-              verdict = 'MANUAL_REVIEW';
-              reasons.push(`Sensitive files changed: ${sensitive.join(', ')}`);
-            }
+            if (process.env.OPENAI_API_KEY) {
+              const model = process.env.OPENAI_MODEL || 'gpt-4o-mini';
+              const prompt = [
+                'You are an experienced senior software engineer reviewing a GitHub pull request.',
+                'Review the diff like a human reviewer.',
+                'Focus on correctness, code smell, maintainability, API design, null safety, dead code, suspicious logic, and unnecessary complexity.',
+                'Be strict but fair. Do not invent issues if the code is fine.',
+                'Return ONLY valid JSON with this exact schema:',
+                '{"verdict":"PASS|REQUEST_CHANGES|MANUAL_REVIEW","summary":"string","reasons":["string"],"findings":["string"]}',
+                'Use REQUEST_CHANGES when there is a likely bug, dead code, placeholder logic, broken API contract, or clearly poor implementation.',
+                'Use MANUAL_REVIEW when the diff is too large, too sensitive, or confidence is low.',
+                'Use PASS when the change looks acceptable.',
+                '',
+                `PR title: ${pr.title}`,
+                `PR body: ${pr.body || ''}`,
+                `Files changed: ${count}`,
+                `Diff size: +${additions} / -${deletions}`,
+                'Changed files and patches:',
+                JSON.stringify(compactFiles)
+              ].join('\n');
 
-            for (const f of files) {
-              if (!f.filename.endsWith('.cs')) continue;
-              const patch = f.patch || '';
-              if (!patch) continue;
+              const response = await fetch('https://api.openai.com/v1/chat/completions', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+                },
+                body: JSON.stringify({
+                  model,
+                  temperature: 0.1,
+                  messages: [
+                    { role: 'system', content: 'You are a concise and accurate pull request reviewer.' },
+                    { role: 'user', content: prompt }
+                  ]
+                })
+              });
 
-              if (/\+\s*return\s+\d+\s*;/.test(patch)) {
-                verdict = 'REQUEST_CHANGES';
-                reasons.push(`Suspicious numeric return in ${f.filename}`);
-                findings.push(`${f.filename}: method appears to return a numeric literal directly; likely wrong return type or placeholder logic.`);
+              if (!response.ok) {
+                const text = await response.text();
+                throw new Error(`OpenAI API error ${response.status}: ${text}`);
               }
-              if (/\+.*throw\s+new\s+NotImplementedException\s*\(/.test(patch)) {
-                verdict = 'REQUEST_CHANGES';
-                reasons.push(`NotImplementedException introduced in ${f.filename}`);
-                findings.push(`${f.filename}: new NotImplementedException introduced.`);
-              }
-              if (/\+.*ToUpper\(\)/.test(patch) && !/StringComparison/.test(patch)) {
-                findings.push(`${f.filename}: check whether culture-sensitive casing is intended.`);
-              }
-              if (/\+.*name\./.test(patch) && !/string\.IsNullOrWhiteSpace\(name\)/.test(patch) && !/name\s*\?\./.test(patch)) {
-                findings.push(`${f.filename}: possible null-handling issue if name can be null.`);
-              }
+
+              const data = await response.json();
+              const content = data.choices?.[0]?.message?.content || '{}';
+              const parsed = JSON.parse(content);
+
+              verdict = ['PASS', 'REQUEST_CHANGES', 'MANUAL_REVIEW'].includes(parsed.verdict) ? parsed.verdict : 'MANUAL_REVIEW';
+              summary = parsed.summary || 'No summary provided.';
+              reasons = Array.isArray(parsed.reasons) ? parsed.reasons : [];
+              findings = Array.isArray(parsed.findings) ? parsed.findings : [];
             }
 
             const body = [
-              '## Automated PR review',
+              '## AI PR review',
               '',
               `**Verdict:** ${verdict}`,
+              `**Summary:** ${summary}`,
               `**Files changed:** ${count}`,
               `**Diff size:** +${additions} / -${deletions}`,
               '',
-              reasons.length ? `**Reasons:**\n${reasons.map(r => `- ${r}`).join('\n')}` : '**Reasons:**\n- No blocking policy issues detected',
+              reasons.length ? `**Reasons:**\n${reasons.map(r => `- ${r}`).join('\n')}` : '**Reasons:**\n- None',
               '',
-              findings.length ? `**Findings:**\n${findings.map(f => `- ${f}`).join('\n')}` : '**Findings:**\n- No notable code-review findings',
+              findings.length ? `**Findings:**\n${findings.map(f => `- ${f}`).join('\n')}` : '**Findings:**\n- No notable findings',
               '',
               '**Changed files:**',
               names || '- None'
@@ -98,20 +128,21 @@ jobs:
             await github.rest.issues.createComment({ owner, repo, issue_number: pull_number, body });
 
             core.setOutput('telegram_message', [
-              `${verdict === 'PASS' ? '🤖' : '⚠️'} PR #${pull_number} auto review: ${verdict}`,
-              `Title: ${context.payload.pull_request.title}`,
+              `${verdict === 'PASS' ? '🤖' : '⚠️'} PR #${pull_number} AI review: ${verdict}`,
+              `Title: ${pr.title}`,
+              `Summary: ${summary}`,
               `Files changed: ${count}`,
               `Diff size: +${additions} / -${deletions}`,
-              `Reasons: ${reasons.length ? reasons.join('; ') : 'No blocking policy issues detected'}`,
-              `Findings: ${findings.length ? findings.join('; ') : 'No notable code-review findings'}`,
+              `Reasons: ${reasons.length ? reasons.join('; ') : 'None'}`,
+              `Findings: ${findings.length ? findings.join('; ') : 'No notable findings'}`,
               `Changed files:\n${names || '- None'}`,
-              `Link: ${context.payload.pull_request.html_url}`,
+              `Link: ${pr.html_url}`,
             ].join('\n'));
 
             if (verdict === 'PASS') {
               await github.rest.issues.addLabels({ owner, repo, issue_number: pull_number, labels: ['automerge'] });
             } else {
-              core.setFailed(`Review blocked: ${reasons.join('; ') || 'manual review required'}`);
+              core.setFailed(`Review blocked: ${reasons.join('; ') || summary || 'manual review required'}`);
             }
 
       - name: Send Telegram review summary
