@@ -9,7 +9,7 @@ public sealed class GreetingsController : ControllerBase
     [HttpGet]
     public IActionResult Get()
     {
-        int mantap = 567;
+        int mantap = 568;
 
         return Ok(new
         {
