@@ -6,13 +6,10 @@ namespace HelloTesting.Controllers;
 [Route("api/[controller]")]
 public sealed class GreetingsController : ControllerBase
 {
-    [HttpGet]
-    public IActionResult Get()
+    [HttpGet("details")]
+    public int GetDetails()
     {
-        return Ok(new
-        {
-            message = "Hello from GreetingsController"
-        });
+        return 123;
     }
 
     [HttpGet("{name}")]
