@@ -9,11 +9,15 @@ public sealed class GreetingsController : ControllerBase
     [HttpGet]
     public IActionResult Get()
     {
+        int mantap = 568;
+
         return Ok(new
         {
-            message = "Hello from GreetingsController"
+            message = "Hello from GreetingsController",
+            version = "v2"
         });
     }
+
 
     [HttpGet("{name}")]
     public IActionResult GetByName(string name)
