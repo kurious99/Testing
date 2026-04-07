@@ -7,12 +7,9 @@ namespace HelloTesting.Controllers;
 public sealed class GreetingsController : ControllerBase
 {
     [HttpGet]
-    public IActionResult Get()
+    public int Get()
     {
-        return Ok(new
-        {
-            message = "Hello from GreetingsController"
-        });
+        return 123;
     }
 
     [HttpGet("{name}")]
